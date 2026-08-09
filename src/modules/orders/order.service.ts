@@ -77,10 +77,15 @@ export const createOrder = async (userId: string, input: CreateOrderInput) => {
     message: `Order placed: ${order.orderNumber}`,
   });
 
-  await sendEmail(order.id);
-  await syncSheet(order.id);
+  // Trigger background integrations without blocking checkout response
+  sendEmail(order.id).catch((err) => {
+    console.error("Background sendEmail error:", err);
+  });
+  syncSheet(order.id).catch((err) => {
+    console.error("Background syncSheet error:", err);
+  });
 
-  return OrderModel.findById(order.id);
+  return order;
 };
 
 export const getMyOrders = async (userId: string) => {

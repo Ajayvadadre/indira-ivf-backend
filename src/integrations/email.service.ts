@@ -14,14 +14,20 @@ export const sendOrderEmailToAdmin = async (order: OrderEmailInput) => {
     throw new ApiError(500, "Email is not configured");
   }
 
+  const port = env.SMTP_PORT || 587;
+  const isSecure = port === 465;
+
   const transporter = nodemailer.createTransport({
     host: env.SMTP_HOST,
-    port: env.SMTP_PORT || 587,
-    secure: false,
+    port,
+    secure: isSecure,
     auth: {
       user: env.SMTP_USER,
       pass: env.SMTP_PASS,
     },
+    connectionTimeout: 5000,
+    greetingTimeout: 5000,
+    socketTimeout: 5000,
   });
 
   await transporter.sendMail({
