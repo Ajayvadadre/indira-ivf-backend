@@ -1,29 +1,39 @@
+import { prisma } from "../../config/prisma.js";
 import { uploadProductImage } from "../../integrations/s3.service.js";
 import { ApiError } from "../../utils/ApiError.js";
-import { isValidObjectId } from "../../utils/isValidObjectId.js";
 import { createActivityLog } from "../logs/log.service.js";
-import { ProductModel } from "./product.model.js";
+
+// Add _id alias so frontend code that uses MongoDB-style product._id keeps working
+const withId = <T extends { id: string }>(obj: T): T & { _id: string } => ({
+  ...obj,
+  _id: obj.id,
+});
 
 export const getProducts = async () => {
-  return ProductModel.find({ isActive: true }).sort({ createdAt: -1 });
+  const products = await prisma.product.findMany({
+    where: { isActive: true },
+    orderBy: { createdAt: "desc" },
+  });
+  return products.map(withId);
 };
 
 export const getAdminProducts = async () => {
-  return ProductModel.find().sort({ createdAt: -1 });
+  const products = await prisma.product.findMany({
+    orderBy: { createdAt: "desc" },
+  });
+  return products.map(withId);
 };
 
 export const getProductById = async (id: string) => {
-  if (!isValidObjectId(id)) {
-    throw new ApiError(400, "Invalid product id");
-  }
-
-  const product = await ProductModel.findById(id);
+  const product = await prisma.product.findUnique({
+    where: { id },
+  });
 
   if (!product) {
     throw new ApiError(404, "Product not found");
   }
 
-  return product;
+  return withId(product);
 };
 
 export const createProduct = async (
@@ -31,14 +41,21 @@ export const createProduct = async (
   files: Express.Multer.File[] = [],
   adminId: string
 ) => {
-  const existingProduct = await ProductModel.findOne({ sku: data.sku });
-
-  if (existingProduct) {
-    throw new ApiError(409, "SKU already exists");
-  }
-
   const images = await uploadImages(files);
-  const product = await ProductModel.create({ ...data, images });
+
+  const product = await prisma.product.create({
+    data: {
+      name: String(data.name || ""),
+      description: String(data.description || ""),
+      price: Number(data.price || 0),
+      stock: Number(data.stock || 0),
+      category: String(data.category || "General"),
+      images,
+      isActive: data.isActive !== undefined ? Boolean(data.isActive) : true,
+      discountThreshold: Number(data.discountThreshold || 0),
+      discountPercent: Number(data.discountPercent || 0),
+    },
+  });
 
   await createActivityLog({
     user: adminId,
@@ -48,7 +65,7 @@ export const createProduct = async (
     message: `Product created: ${product.name}`,
   });
 
-  return product;
+  return withId(product);
 };
 
 export const updateProduct = async (
@@ -57,16 +74,30 @@ export const updateProduct = async (
   files: Express.Multer.File[] = [],
   adminId: string
 ) => {
-  const product = await getProductById(id);
-  const images = await uploadImages(files);
+  const existingProduct = await getProductById(id);
+  const newImages = await uploadImages(files);
 
-  Object.assign(product, data);
+  const updatedImages =
+    newImages.length > 0
+      ? [...existingProduct.images, ...newImages]
+      : existingProduct.images;
 
-  if (images.length > 0) {
-    product.images.push(...images);
-  }
+  const updatePayload: Record<string, unknown> = {};
+  if (data.name !== undefined) updatePayload.name = String(data.name);
+  if (data.description !== undefined)
+    updatePayload.description = String(data.description);
+  if (data.price !== undefined) updatePayload.price = Number(data.price);
+  if (data.stock !== undefined) updatePayload.stock = Number(data.stock);
+  if (data.category !== undefined) updatePayload.category = String(data.category);
+  if (data.isActive !== undefined) updatePayload.isActive = Boolean(data.isActive);
+  if (data.discountThreshold !== undefined) updatePayload.discountThreshold = Number(data.discountThreshold);
+  if (data.discountPercent !== undefined) updatePayload.discountPercent = Number(data.discountPercent);
+  updatePayload.images = updatedImages;
 
-  await product.save();
+  const product = await prisma.product.update({
+    where: { id },
+    data: updatePayload as any,
+  });
 
   await createActivityLog({
     user: adminId,
@@ -76,14 +107,16 @@ export const updateProduct = async (
     message: `Product updated: ${product.name}`,
   });
 
-  return product;
+  return withId(product);
 };
 
 export const deleteProduct = async (id: string, adminId: string) => {
-  const product = await getProductById(id);
+  await getProductById(id);
 
-  product.isActive = false;
-  await product.save();
+  const product = await prisma.product.update({
+    where: { id },
+    data: { isActive: false },
+  });
 
   await createActivityLog({
     user: adminId,
@@ -93,7 +126,7 @@ export const deleteProduct = async (id: string, adminId: string) => {
     message: `Product deleted: ${product.name}`,
   });
 
-  return product;
+  return withId(product);
 };
 
 const uploadImages = async (files: Express.Multer.File[]) => {

@@ -8,6 +8,8 @@ export const createProductSchema = z.object({
     sku: z.string().min(1, "SKU is required"),
     category: z.string().min(1, "Category is required"),
     stock: z.coerce.number().min(0),
+    discountThreshold: z.coerce.number().min(0).default(0),
+    discountPercent: z.coerce.number().min(0).max(100).default(0),
   }),
 });
 
@@ -20,5 +22,7 @@ export const updateProductSchema = z.object({
     category: z.string().min(1).optional(),
     stock: z.coerce.number().min(0).optional(),
     isActive: z.coerce.boolean().optional(),
+    discountThreshold: z.coerce.number().min(0).optional(),
+    discountPercent: z.coerce.number().min(0).max(100).optional(),
   }),
 });

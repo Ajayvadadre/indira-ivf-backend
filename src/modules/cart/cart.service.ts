@@ -1,20 +1,78 @@
+import { prisma } from "../../config/prisma.js";
 import { ApiError } from "../../utils/ApiError.js";
-import { isValidObjectId } from "../../utils/isValidObjectId.js";
 import { createActivityLog } from "../logs/log.service.js";
-import { ProductModel } from "../products/product.model.js";
-import { CartModel } from "./cart.model.js";
+
+const calcDiscount = (
+  price: number,
+  quantity: number,
+  threshold: number,
+  percent: number
+): { discountedPrice: number; discountApplied: boolean } => {
+  if (threshold > 0 && quantity > threshold && percent > 0) {
+    const discountedPrice = Math.round(price * (1 - percent / 100) * 100) / 100;
+    return { discountedPrice, discountApplied: true };
+  }
+  return { discountedPrice: price, discountApplied: false };
+};
+
+const formatCart = (cart: any) => {
+  if (!cart) return { items: [] };
+
+  return {
+    id: cart.id,
+    user: cart.userId,
+    items: (cart.items || []).map((item: any) => {
+      const product = item.product;
+      const { discountedPrice, discountApplied } = product
+        ? calcDiscount(
+            product.price,
+            item.quantity,
+            product.discountThreshold ?? 0,
+            product.discountPercent ?? 0
+          )
+        : { discountedPrice: 0, discountApplied: false };
+
+      return {
+        id: item.id,
+        quantity: item.quantity,
+        product: product
+          ? {
+              ...product,
+              _id: product.id,
+            }
+          : null,
+        discountedPrice,
+        discountApplied,
+        discountPercent: product?.discountPercent ?? 0,
+        discountThreshold: product?.discountThreshold ?? 0,
+        lineTotal: Math.round(discountedPrice * item.quantity * 100) / 100,
+      };
+    }),
+  };
+};
 
 export const getCart = async (userId: string) => {
-  let cart = await CartModel.findOne({ user: userId }).populate("items.product");
+  let cart = await prisma.cart.findUnique({
+    where: { userId },
+    include: {
+      items: {
+        include: { product: true },
+      },
+    },
+  });
 
   if (!cart) {
-    cart = await CartModel.create({
-      user: userId,
-      items: [],
+    cart = await prisma.cart.create({
+      data: { userId },
+      include: {
+        items: {
+          include: { product: true },
+        },
+      },
     });
   }
 
-  return cart;
+  return formatCart(cart);
 };
 
 export const addToCart = async (
@@ -22,11 +80,9 @@ export const addToCart = async (
   productId: string,
   quantity: number
 ) => {
-  if (!isValidObjectId(productId)) {
-    throw new ApiError(400, "Invalid product id");
-  }
-
-  const product = await ProductModel.findById(productId);
+  const product = await prisma.product.findUnique({
+    where: { id: productId },
+  });
 
   if (!product || !product.isActive) {
     throw new ApiError(404, "Product not found");
@@ -36,25 +92,38 @@ export const addToCart = async (
     throw new ApiError(400, "Not enough stock");
   }
 
-  const cart = await CartModel.findOne({ user: userId });
+  let cart = await prisma.cart.findUnique({
+    where: { userId },
+    include: { items: true },
+  });
 
   if (!cart) {
-    await CartModel.create({
-      user: userId,
-      items: [{ product: productId, quantity }],
+    cart = await prisma.cart.create({
+      data: {
+        userId,
+        items: {
+          create: [{ productId, quantity }],
+        },
+      },
+      include: { items: true },
     });
   } else {
-    const item = cart.items.find((cartItem) => {
-      return String(cartItem.product) === productId;
-    });
+    const existingItem = cart.items.find((item) => item.productId === productId);
 
-    if (item) {
-      item.quantity += quantity;
+    if (existingItem) {
+      await prisma.cartItem.update({
+        where: { id: existingItem.id },
+        data: { quantity: existingItem.quantity + quantity },
+      });
     } else {
-      cart.items.push({ product: product._id, quantity });
+      await prisma.cartItem.create({
+        data: {
+          cartId: cart.id,
+          productId,
+          quantity,
+        },
+      });
     }
-
-    await cart.save();
   }
 
   await createActivityLog({
@@ -73,39 +142,46 @@ export const updateCartItem = async (
   productId: string,
   quantity: number
 ) => {
-  const cart = await CartModel.findOne({ user: userId });
+  const cart = await prisma.cart.findUnique({
+    where: { userId },
+    include: { items: true },
+  });
 
   if (!cart) {
     throw new ApiError(404, "Cart not found");
   }
 
-  const item = cart.items.find((cartItem) => {
-    return String(cartItem.product) === productId;
-  });
+  const existingItem = cart.items.find((item) => item.productId === productId);
 
-  if (!item) {
+  if (!existingItem) {
     throw new ApiError(404, "Cart item not found");
   }
 
-  item.quantity = quantity;
-  await cart.save();
+  await prisma.cartItem.update({
+    where: { id: existingItem.id },
+    data: { quantity },
+  });
 
   return getCart(userId);
 };
 
 export const removeCartItem = async (userId: string, productId: string) => {
-  const cart = await CartModel.findOne({ user: userId });
+  const cart = await prisma.cart.findUnique({
+    where: { userId },
+    include: { items: true },
+  });
 
   if (!cart) {
     throw new ApiError(404, "Cart not found");
   }
 
-  cart.set(
-    "items",
-    cart.items.filter((item) => String(item.product) !== productId)
-  );
+  const existingItem = cart.items.find((item) => item.productId === productId);
 
-  await cart.save();
+  if (existingItem) {
+    await prisma.cartItem.delete({
+      where: { id: existingItem.id },
+    });
+  }
 
   await createActivityLog({
     user: userId,
@@ -119,15 +195,17 @@ export const removeCartItem = async (userId: string, productId: string) => {
 };
 
 export const clearCart = async (userId: string) => {
-  const cart = await CartModel.findOne({ user: userId });
+  const cart = await prisma.cart.findUnique({
+    where: { userId },
+  });
 
   if (!cart) {
     return getCart(userId);
   }
 
-  cart.set("items", []);
+  await prisma.cartItem.deleteMany({
+    where: { cartId: cart.id },
+  });
 
-  await cart.save();
-
-  return cart;
+  return getCart(userId);
 };

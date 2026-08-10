@@ -1,0 +1,123 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Role {
+  USER
+  ADMIN
+}
+
+model User {
+  id           String        @id @default(uuid())
+  name         String
+  email        String        @unique
+  password     String
+  role         Role          @default(USER)
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  cart         Cart?
+  orders       Order[]
+  activityLogs ActivityLog[]
+  errorLogs    ErrorLog[]
+}
+
+model Product {
+  id                String      @id @default(uuid())
+  name              String
+  description       String
+  price             Float
+  stock             Int
+  category          String
+  images            String[]
+  isActive          Boolean     @default(true)
+  discountThreshold Int         @default(0)   // min quantity to trigger discount (0 = disabled)
+  discountPercent   Float       @default(0)   // e.g. 10 means 10% off
+  createdAt         DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
+
+  cartItems   CartItem[]
+  orderItems  OrderItem[]
+}
+
+
+
+model Cart {
+  id        String     @id @default(uuid())
+  userId    String     @unique
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  items     CartItem[]
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+}
+
+model CartItem {
+  id        String   @id @default(uuid())
+  cartId    String
+  cart      Cart     @relation(fields: [cartId], references: [id], onDelete: Cascade)
+  productId String
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  quantity  Int      @default(1)
+  createdAt DateTime @default(now())
+
+  @@unique([cartId, productId])
+}
+
+model Order {
+  id                String      @id @default(uuid())
+  orderNumber       String      @unique
+  userId            String
+  user              User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  customerName      String
+  customerEmail     String
+  customerPhone     String
+  shippingAddress   String
+  subtotal          Float
+  total             Float
+  orderStatus       String      @default("placed")
+  emailStatus       String      @default("pending")
+  googleSheetStatus String      @default("pending")
+  items             OrderItem[]
+  createdAt         DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
+}
+
+model OrderItem {
+  id        String   @id @default(uuid())
+  orderId   String
+  order     Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  productId String
+  product   Product  @relation(fields: [productId], references: [id])
+  name      String
+  price     Float
+  quantity  Int
+  total     Float
+  createdAt DateTime @default(now())
+}
+
+model ActivityLog {
+  id         String   @id @default(uuid())
+  userId     String?
+  user       User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  action     String
+  entityType String?
+  entityId   String?
+  message    String
+  createdAt  DateTime @default(now())
+}
+
+model ErrorLog {
+  id         String   @id @default(uuid())
+  message    String
+  stack      String?
+  method     String?
+  path       String?
+  statusCode Int?
+  userId     String?
+  user       User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  createdAt  DateTime @default(now())
+}

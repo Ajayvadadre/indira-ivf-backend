@@ -10,7 +10,9 @@ const envSchema = z.object({
 
   CLIENT_URL: z.string().url(),
 
-  MONGO_URI: z.string().min(1, "MONGO_URI is required"),
+  DATABASE_URL: z.string().optional(),
+
+  MONGO_URI: z.string().optional(),
 
   JWT_SECRET: z.string().min(20, "JWT_SECRET must be at least 20 characters"),
 

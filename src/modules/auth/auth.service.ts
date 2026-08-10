@@ -1,15 +1,16 @@
 import bcrypt from "bcrypt";
-import jwt from "jsonwebtoken";
-import { SignOptions } from "jsonwebtoken";
+import jwt, { SignOptions } from "jsonwebtoken";
 import { env } from "../../config/env.js";
+import { prisma } from "../../config/prisma.js";
 import { ApiError } from "../../utils/ApiError.js";
-import { UserModel } from "../users/user.model.js";
 import { LoginInput, RegisterInput } from "./auth.validation.js";
 
 const passwordSaltRounds = 10;
 
 export const registerUser = async (input: RegisterInput) => {
-  const existingUser = await UserModel.findOne({ email: input.email });
+  const existingUser = await prisma.user.findUnique({
+    where: { email: input.email },
+  });
 
   if (existingUser) {
     throw new ApiError(409, "Email is already registered");
@@ -17,13 +18,16 @@ export const registerUser = async (input: RegisterInput) => {
 
   const hashedPassword = await bcrypt.hash(input.password, passwordSaltRounds);
 
-  const user = await UserModel.create({
-    name: input.name,
-    email: input.email,
-    password: hashedPassword,
+  const user = await prisma.user.create({
+    data: {
+      name: input.name,
+      email: input.email,
+      password: hashedPassword,
+    },
   });
 
-  const token = createToken(user.id, user.role);
+  const roleString = user.role === "ADMIN" ? "admin" : "user";
+  const token = createToken(user.id, roleString);
 
   return {
     token,
@@ -32,16 +36,12 @@ export const registerUser = async (input: RegisterInput) => {
 };
 
 export const loginUser = async (input: LoginInput) => {
-  const user = await UserModel.findOne({ email: input.email }).select(
-    "+password"
-  );
+  const user = await prisma.user.findUnique({
+    where: { email: input.email },
+  });
 
   if (!user) {
     throw new ApiError(401, "Invalid email or password");
-  }
-
-  if (!user.isActive) {
-    throw new ApiError(403, "User account is inactive");
   }
 
   const passwordMatches = await bcrypt.compare(input.password, user.password);
@@ -50,7 +50,8 @@ export const loginUser = async (input: LoginInput) => {
     throw new ApiError(401, "Invalid email or password");
   }
 
-  const token = createToken(user.id, user.role);
+  const roleString = user.role === "ADMIN" ? "admin" : "user";
+  const token = createToken(user.id, roleString);
 
   return {
     token,
@@ -59,9 +60,11 @@ export const loginUser = async (input: LoginInput) => {
 };
 
 export const getCurrentUser = async (userId: string) => {
-  const user = await UserModel.findById(userId);
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+  });
 
-  if (!user || !user.isActive) {
+  if (!user) {
     throw new ApiError(401, "User not found");
   }
 
@@ -84,15 +87,15 @@ const createToken = (userId: string, role: string) => {
 };
 
 const formatUser = (user: {
-  _id: unknown;
+  id: string;
   name: string;
   email: string;
   role: string;
 }) => {
   return {
-    id: String(user._id),
+    id: user.id,
     name: user.name,
     email: user.email,
-    role: user.role,
+    role: user.role === "ADMIN" ? "admin" : "user",
   };
 };

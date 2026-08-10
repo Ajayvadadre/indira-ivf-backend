@@ -21,13 +21,16 @@ export const errorHandler: ErrorRequestHandler = (error, req, res, _next) => {
     "Request failed"
   );
 
+  // Fire-and-forget: never let a logging failure crash the response
+  // userId is intentionally omitted — the JWT user may not exist in the current DB
   void createErrorLog({
     message,
     stack: error.stack,
     method: req.method,
     path: req.path,
     statusCode,
-    user: req.user?.id,
+  }).catch((logErr) => {
+    logger.warn({ logErr }, "createErrorLog failed silently");
   });
 
   res.status(statusCode).json(

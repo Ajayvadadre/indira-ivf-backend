@@ -1,5 +1,4 @@
-import { ActivityLogModel } from "./activityLog.model.js";
-import { ErrorLogModel } from "./errorLog.model.js";
+import { prisma } from "../../config/prisma.js";
 
 type ActivityInput = {
   user?: string;
@@ -19,17 +18,40 @@ type ErrorInput = {
 };
 
 export const createActivityLog = async (input: ActivityInput) => {
-  await ActivityLogModel.create(input);
+  await prisma.activityLog.create({
+    data: {
+      userId: input.user || null,
+      action: input.action,
+      entityType: input.entityType || null,
+      entityId: input.entityId || null,
+      message: input.message,
+    },
+  });
 };
 
 export const createErrorLog = async (input: ErrorInput) => {
-  await ErrorLogModel.create(input);
+  await prisma.errorLog.create({
+    data: {
+      message: input.message,
+      stack: input.stack || null,
+      method: input.method || null,
+      path: input.path || null,
+      statusCode: input.statusCode || null,
+      userId: input.user || null,
+    },
+  });
 };
 
 export const getActivityLogs = async () => {
-  return ActivityLogModel.find().sort({ createdAt: -1 }).limit(100);
+  return prisma.activityLog.findMany({
+    orderBy: { createdAt: "desc" },
+    take: 100,
+  });
 };
 
 export const getErrorLogs = async () => {
-  return ErrorLogModel.find().sort({ createdAt: -1 }).limit(100);
+  return prisma.errorLog.findMany({
+    orderBy: { createdAt: "desc" },
+    take: 100,
+  });
 };
