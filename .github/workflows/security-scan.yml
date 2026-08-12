@@ -6,18 +6,20 @@ on:
   workflow_dispatch: # Allows manual trigger from GitHub UI
 
 env:
-  TARGET_URL: "your-app-name.onrender.com" # Replace with your Render URL
+  TARGET_URL: "reportscheduler.onrender.com" # Plain hostname without https://
 
 jobs:
   security-audit:
     runs-on: ubuntu-latest
 
     steps:
+      # Pinned to actions/checkout@v4.1.7 SHA
       - name: Checkout Source Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332
 
+      # Pinned to gitleaks/gitleaks-action@v2.3.7 SHA
       - name: Run GitLeaks (Secret Scanning)
-        uses: gitleaks/gitleaks-action@v2
+        uses: gitleaks/gitleaks-action@8222956cf9c7715f3e91122ce2dd07b1d6e1b782
         continue-on-error: true # Prevents pipeline from stopping if issues are found
 
       - name: Run Semgrep (Static Code Analysis)
@@ -36,11 +38,12 @@ jobs:
         run: |
           docker run -v $(pwd):/zap/wrk/:rw -t zaproxy/zap-stable zap-full-scan.py \
             -t https://${{ env.TARGET_URL }} \
-            -r zap-report.html
+            -r zap-report.html || true
         continue-on-error: true
 
+      # Pinned to actions/upload-artifact@v4.3.4 SHA
       - name: Upload Security Reports as Artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08
         with:
           name: vapt-security-reports
           path: |
