@@ -44,7 +44,7 @@ jobs:
         uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332
 
       - name: Run GitLeaks (Secret Scanning)
-        uses: gitleaks/gitleaks-action@060e97c90a5681f00c03a876dd1a027647480271
+        uses: gitleaks/gitleaks-action@v3
         continue-on-error: true
 
       - name: Run Semgrep (Static Code Analysis)
