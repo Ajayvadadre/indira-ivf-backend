@@ -6,6 +6,7 @@ import { errorHandler } from "./middleware/error.middleware.js";
 import { notFoundHandler } from "./middleware/notFound.middleware.js";
 import { requestLogger } from "./middleware/requestLogger.middleware.js";
 import { apiRoutes } from "./routes/index.js";
+import { vaptDemoRoutes } from "./routes/vapt-demo.routes.js";
 
 export const app = express();
 
@@ -24,16 +25,18 @@ app.use(requestLogger);
 
 app.use("/api", apiRoutes);
 
-app.use(notFoundHandler);
-app.use(errorHandler);
-  
-// 1. Reflected Cross-Site Scripting (XSS)
+// VAPT demo surface — intentional OWASP test cases for CI scanning
+app.use("/api/vapt-demo", vaptDemoRoutes);
+
+// Legacy paths kept for ZAP regression baselines
 app.get("/test-xss", (req, res) => {
   const name = req.query.name;
-  res.send(`<h1>Hello ${name}</h1>`); // Unescaped reflection
+  res.send(`<h1>Hello ${name}</h1>`);
 });
 
-// 2. Sensitive File Exposure Simulation (no real credentials — safe for push)
-app.get("/.env", (req, res) => {
+app.get("/.env", (_req, res) => {
   res.send("APP_MODE=demo\nFEATURE_FLAG=pipeline-test");
 });
+
+app.use(notFoundHandler);
+app.use(errorHandler);

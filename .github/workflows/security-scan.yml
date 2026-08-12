@@ -2,45 +2,72 @@ name: Automated VAPT Security Scan
 
 on:
   push:
-    branches: [ main ]
-  workflow_dispatch: # Allows manual trigger from GitHub UI
+    branches: [main]
+  workflow_dispatch:
 
 env:
-  TARGET_URL: "reportscheduler.onrender.com" # Plain hostname without https://
+  TARGET_URL: "reportscheduler.onrender.com"
   PIPELINE_TEST_ID: "vapt-cicd-test-2026-08-12"
+  # report-only = upload findings, do not fail on Semgrep hits (use while VAPT demo routes exist)
+  # blocking   = fail security-audit when Semgrep finds issues (blocks gated deploy)
+  SECURITY_GATE: report-only
 
 jobs:
   security-audit:
     runs-on: ubuntu-latest
+    outputs:
+      semgrep_findings: ${{ steps.semgrep.outputs.finding_count }}
 
     steps:
       - name: Verify Pipeline Trigger
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+          COMMIT_SHA: ${{ github.sha }}
+          ACTOR: ${{ github.actor }}
+          RUN_ID: ${{ github.run_id }}
+          TEST_ID: ${{ env.PIPELINE_TEST_ID }}
         run: |
           echo "========================================="
           echo "Pipeline triggered successfully!"
-          echo "Event:      ${{ github.event_name }}"
-          echo "Branch:     ${{ github.ref_name }}"
-          echo "Commit:     ${{ github.sha }}"
-          echo "Actor:      ${{ github.actor }}"
-          echo "Run ID:     ${{ github.run_id }}"
-          echo "Test ID:    ${{ env.PIPELINE_TEST_ID }}"
+          echo "Event:      $EVENT_NAME"
+          echo "Branch:     $REF_NAME"
+          echo "Commit:     $COMMIT_SHA"
+          echo "Actor:      $ACTOR"
+          echo "Run ID:     $RUN_ID"
+          echo "Test ID:    $TEST_ID"
+          echo "Gate mode:  ${{ env.SECURITY_GATE }}"
           echo "Timestamp:  $(date -u +%Y-%m-%dT%H:%M:%SZ)"
           echo "========================================="
 
-      # Pinned to actions/checkout@v4.1.7 SHA
       - name: Checkout Source Code
         uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332
 
-      # Pinned to gitleaks/gitleaks-action@v2.3.7 SHA
       - name: Run GitLeaks (Secret Scanning)
-        uses: gitleaks/gitleaks-action@v3
-        continue-on-error: true # Prevents pipeline from stopping if issues are found
+        uses: gitleaks/gitleaks-action@060e97c90a5681f00c03a876dd1a027647480271
+        continue-on-error: true
 
       - name: Run Semgrep (Static Code Analysis)
+        id: semgrep
         run: |
           python3 -m pip install semgrep
+          set +e
+          semgrep --config=p/owasp-top-ten --config=p/nodejs --json --output semgrep-results.json .
           semgrep --config=p/owasp-top-ten --config=p/nodejs . > semgrep-results.txt
-        continue-on-error: true
+          set -e
+          FINDING_COUNT=$(python3 - <<'PY'
+          import json
+          from pathlib import Path
+          path = Path("semgrep-results.json")
+          if not path.exists():
+              print(0)
+          else:
+              data = json.loads(path.read_text() or "{}")
+              print(len(data.get("results", [])))
+          PY
+          )
+          echo "finding_count=$FINDING_COUNT" >> "$GITHUB_OUTPUT"
+          echo "Semgrep findings: $FINDING_COUNT"
 
       - name: Run Network & Port Scan (Nmap)
         run: |
@@ -55,43 +82,95 @@ jobs:
             -r zap-report.html || true
         continue-on-error: true
 
-      - name: Verify Deployed App (Smoke Test)
-        run: |
-          echo "Checking https://${{ env.TARGET_URL }}/api/health"
-          HTTP_CODE=$(curl -s -o smoke-test-response.json -w "%{http_code}" \
-            "https://${{ env.TARGET_URL }}/api/health" || echo "000")
-          echo "HTTP status: $HTTP_CODE"
-          cat smoke-test-response.json || true
-          if grep -q "${{ env.PIPELINE_TEST_ID }}" smoke-test-response.json 2>/dev/null; then
-            echo "Deploy smoke test PASSED — pipeline marker found on live app"
-          else
-            echo "Deploy smoke test SKIPPED — marker not found (Render deploy may still be in progress or TARGET_URL mismatch)"
-            exit 0
-          fi
-        continue-on-error: true
-
       - name: Write Pipeline Summary
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+          COMMIT_SHA: ${{ github.sha }}
+          TEST_ID: ${{ env.PIPELINE_TEST_ID }}
+          TARGET: ${{ env.TARGET_URL }}
+          GATE_MODE: ${{ env.SECURITY_GATE }}
+          FINDING_COUNT: ${{ steps.semgrep.outputs.finding_count }}
         run: |
           {
             echo "## VAPT Pipeline Run Summary"
             echo ""
             echo "| Field | Value |"
             echo "|-------|-------|"
-            echo "| Test ID | \`${{ env.PIPELINE_TEST_ID }}\` |"
-            echo "| Trigger | \`${{ github.event_name }}\` |"
-            echo "| Branch | \`${{ github.ref_name }}\` |"
-            echo "| Commit | \`${{ github.sha }}\` |"
-            echo "| Target | \`https://${{ env.TARGET_URL }}\` |"
+            echo "| Test ID | \`$TEST_ID\` |"
+            echo "| Trigger | \`$EVENT_NAME\` |"
+            echo "| Branch | \`$REF_NAME\` |"
+            echo "| Commit | \`$COMMIT_SHA\` |"
+            echo "| Target | \`https://$TARGET\` |"
+            echo "| Gate mode | \`$GATE_MODE\` |"
+            echo "| Semgrep findings | \`$FINDING_COUNT\` |"
             echo ""
-            echo "Download **vapt-security-reports** artifact for Semgrep, Nmap, and ZAP results."
+            echo "### Deploy gate"
+            echo ""
+            echo "Render deploy runs **only after** this job succeeds, via \`deploy-render\`."
+            echo "Disable Render auto-deploy and set \`RENDER_DEPLOY_HOOK_URL\` in GitHub Secrets."
+            echo ""
+            echo "Download **vapt-security-reports** for Semgrep, Nmap, and ZAP output."
           } >> "$GITHUB_STEP_SUMMARY"
 
-      # Pinned to actions/upload-artifact@v4.3.4 SHA
+      - name: Enforce Security Gate
+        if: env.SECURITY_GATE == 'blocking' && steps.semgrep.outputs.finding_count != '0'
+        run: |
+          echo "SECURITY_GATE=blocking — Semgrep reported ${{ steps.semgrep.outputs.finding_count }} finding(s)."
+          exit 1
+
       - name: Upload Security Reports as Artifacts
         uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08
         with:
           name: vapt-security-reports
           path: |
             semgrep-results.txt
+            semgrep-results.json
             nmap-results.txt
             zap-report.html
+
+  deploy-render:
+    name: Deploy to Render (after security audit)
+    needs: security-audit
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+
+    steps:
+      - name: Trigger Render Deploy Hook
+        env:
+          RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+          COMMIT_SHA: ${{ github.sha }}
+          FINDING_COUNT: ${{ needs.security-audit.outputs.semgrep_findings }}
+        run: |
+          if [ -z "$RENDER_DEPLOY_HOOK_URL" ]; then
+            echo "::error::RENDER_DEPLOY_HOOK_URL secret is missing."
+            echo "1. Render Dashboard → your service → Settings → Deploy Hook → copy URL"
+            echo "2. GitHub → Settings → Secrets → Actions → add RENDER_DEPLOY_HOOK_URL"
+            echo "3. Render → Settings → Build & Deploy → Auto-Deploy → Off"
+            exit 1
+          fi
+          echo "Security audit passed. Triggering Render deploy for commit $COMMIT_SHA"
+          echo "Semgrep findings (informational): $FINDING_COUNT"
+          curl -fsS -X POST "$RENDER_DEPLOY_HOOK_URL"
+          echo "Render deploy hook triggered."
+
+      - name: Wait for deploy and smoke test
+        env:
+          TARGET_URL: ${{ env.TARGET_URL }}
+          TEST_ID: ${{ env.PIPELINE_TEST_ID }}
+        run: |
+          echo "Waiting 90s for Render build..."
+          sleep 90
+          for attempt in 1 2 3 4 5; do
+            HTTP_CODE=$(curl -s -o smoke-test-response.json -w "%{http_code}" \
+              "https://${TARGET_URL}/api/health" || echo "000")
+            echo "Attempt $attempt — HTTP $HTTP_CODE"
+            if [ "$HTTP_CODE" = "200" ] && grep -q "$TEST_ID" smoke-test-response.json; then
+              echo "Post-deploy smoke test PASSED"
+              cat smoke-test-response.json
+              exit 0
+            fi
+            sleep 30
+          done
+          echo "::warning::Post-deploy smoke test did not confirm marker yet — check Render dashboard"
+          cat smoke-test-response.json 2>/dev/null || true

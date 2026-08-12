@@ -22,6 +22,18 @@ healthRoutes.get("/pipeline-test", (_req, res) => {
       pipelineTestId: "vapt-cicd-test-2026-08-12",
       purpose: "Verify GitHub Actions trigger + Render deploy",
       scannedBy: ["gitleaks", "semgrep", "nmap", "owasp-zap"],
+      demoRoutes: "/api/vapt-demo",
+      categories: [
+        "broken-access-control",
+        "cryptographic-failures",
+        "injection",
+        "insecure-design",
+        "security-misconfiguration",
+        "ssrf",
+        "xss",
+        "open-redirect",
+        "path-traversal",
+      ],
     })
   );
 });
