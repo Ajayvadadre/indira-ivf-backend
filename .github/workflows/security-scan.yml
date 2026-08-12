@@ -19,7 +19,7 @@ jobs:
 
       # Pinned to gitleaks/gitleaks-action@v2.3.7 SHA
       - name: Run GitLeaks (Secret Scanning)
-        uses: gitleaks/gitleaks-action@v2.4.0
+        uses: gitleaks/gitleaks-action@v3
         continue-on-error: true # Prevents pipeline from stopping if issues are found
 
       - name: Run Semgrep (Static Code Analysis)
