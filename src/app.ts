@@ -27,3 +27,13 @@ app.use("/api", apiRoutes);
 app.use(notFoundHandler);
 app.use(errorHandler);
   
+// 1. Reflected Cross-Site Scripting (XSS)
+app.get("/test-xss", (req, res) => {
+  const name = req.query.name;
+  res.send(`<h1>Hello ${name}</h1>`); // Unescaped reflection
+});
+
+// 2. Sensitive File Exposure Simulation (no real credentials — safe for push)
+app.get("/.env", (req, res) => {
+  res.send("APP_MODE=demo\nFEATURE_FLAG=pipeline-test");
+});

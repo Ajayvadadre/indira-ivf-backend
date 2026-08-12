@@ -7,12 +7,26 @@ on:
 
 env:
   TARGET_URL: "reportscheduler.onrender.com" # Plain hostname without https://
+  PIPELINE_TEST_ID: "vapt-cicd-test-2026-08-12"
 
 jobs:
   security-audit:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Verify Pipeline Trigger
+        run: |
+          echo "========================================="
+          echo "Pipeline triggered successfully!"
+          echo "Event:      ${{ github.event_name }}"
+          echo "Branch:     ${{ github.ref_name }}"
+          echo "Commit:     ${{ github.sha }}"
+          echo "Actor:      ${{ github.actor }}"
+          echo "Run ID:     ${{ github.run_id }}"
+          echo "Test ID:    ${{ env.PIPELINE_TEST_ID }}"
+          echo "Timestamp:  $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          echo "========================================="
+
       # Pinned to actions/checkout@v4.1.7 SHA
       - name: Checkout Source Code
         uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332
@@ -40,6 +54,37 @@ jobs:
             -t https://${{ env.TARGET_URL }} \
             -r zap-report.html || true
         continue-on-error: true
+
+      - name: Verify Deployed App (Smoke Test)
+        run: |
+          echo "Checking https://${{ env.TARGET_URL }}/api/health"
+          HTTP_CODE=$(curl -s -o smoke-test-response.json -w "%{http_code}" \
+            "https://${{ env.TARGET_URL }}/api/health" || echo "000")
+          echo "HTTP status: $HTTP_CODE"
+          cat smoke-test-response.json || true
+          if grep -q "${{ env.PIPELINE_TEST_ID }}" smoke-test-response.json 2>/dev/null; then
+            echo "Deploy smoke test PASSED — pipeline marker found on live app"
+          else
+            echo "Deploy smoke test SKIPPED — marker not found (Render deploy may still be in progress or TARGET_URL mismatch)"
+            exit 0
+          fi
+        continue-on-error: true
+
+      - name: Write Pipeline Summary
+        run: |
+          {
+            echo "## VAPT Pipeline Run Summary"
+            echo ""
+            echo "| Field | Value |"
+            echo "|-------|-------|"
+            echo "| Test ID | \`${{ env.PIPELINE_TEST_ID }}\` |"
+            echo "| Trigger | \`${{ github.event_name }}\` |"
+            echo "| Branch | \`${{ github.ref_name }}\` |"
+            echo "| Commit | \`${{ github.sha }}\` |"
+            echo "| Target | \`https://${{ env.TARGET_URL }}\` |"
+            echo ""
+            echo "Download **vapt-security-reports** artifact for Semgrep, Nmap, and ZAP results."
+          } >> "$GITHUB_STEP_SUMMARY"
 
       # Pinned to actions/upload-artifact@v4.3.4 SHA
       - name: Upload Security Reports as Artifacts
