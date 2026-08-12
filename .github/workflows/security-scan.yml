@@ -1,0 +1,49 @@
+name: Automated VAPT Security Scan
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch: # Allows manual trigger from GitHub UI
+
+env:
+  TARGET_URL: "your-app-name.onrender.com" # Replace with your Render URL
+
+jobs:
+  security-audit:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Run GitLeaks (Secret Scanning)
+        uses: gitleaks/gitleaks-action@v2
+        continue-on-error: true # Prevents pipeline from stopping if issues are found
+
+      - name: Run Semgrep (Static Code Analysis)
+        run: |
+          python3 -m pip install semgrep
+          semgrep --config=p/owasp-top-ten --config=p/nodejs . > semgrep-results.txt
+        continue-on-error: true
+
+      - name: Run Network & Port Scan (Nmap)
+        run: |
+          sudo apt update && sudo apt install -y nmap
+          nmap -sV ${{ env.TARGET_URL }} -oN nmap-results.txt
+        continue-on-error: true
+
+      - name: Run OWASP ZAP (Dynamic DAST Scan)
+        run: |
+          docker run -v $(pwd):/zap/wrk/:rw -t zaproxy/zap-stable zap-full-scan.py \
+            -t https://${{ env.TARGET_URL }} \
+            -r zap-report.html
+        continue-on-error: true
+
+      - name: Upload Security Reports as Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: vapt-security-reports
+          path: |
+            semgrep-results.txt
+            nmap-results.txt
+            zap-report.html
